@@ -45,7 +45,7 @@ with col2:
         else:
             # 配置 Gemini
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-pro') # 使用最强模型
+            model = genai.GenerativeModel('gemini-1.5-flash') # 使用最强模型
             
             # 你的核心 Prompt (直接植入代码)
             system_prompt = """
@@ -83,4 +83,5 @@ with col2:
                     st.markdown(response.text)
                     st.success("生成完成！您可以直接复制上方内容。")
                 except Exception as e:
+
                     st.error(f"发生错误，请检查 API Key 或网络: {e}")
