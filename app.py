@@ -1,142 +1,189 @@
 import streamlit as st
 import google.generativeai as genai
+import pandas as pd
+import time
 
-# ================= 配置区 =================
+# ================= 0. 页面配置 (更专业的设置) =================
 st.set_page_config(
-    page_title="Sensight 晟策 | 智能投行合伙人",
+    page_title="Sensight 晟策 | 医疗创投智能系统",
     page_icon="🧬",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# 侧边栏
+# 自定义 CSS：隐藏 Streamlit 默认的汉堡菜单和脚标，让界面更干净
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            .stTextArea textarea {font-size: 14px;}
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+# ================= 1. 侧边栏：控制台 =================
 with st.sidebar:
-    st.image("https://img.icons8.com/ios-filled/100/4a90e2/dna-helix.png", width=50)
-    st.title("Sensight 晟策")
+    st.image("https://img.icons8.com/ios-filled/100/4a90e2/dna-helix.png", width=60)
+    st.title("Sensight Console")
+    st.caption("医疗产业投融资决策系统 V2.0")
+    
     st.markdown("---")
     
-    # 1. 核心功能选择器 (新增)
-    st.subheader("🛠️ 选择生成模块")
-    task_type = st.radio(
-        "请选择您需要撰写的章节：",
-        ("📄 Executive Summary (执行摘要)", "📊 Market & Competition (市场竞品)"),
-        captions=["投资亮点、核心数据、融资规划", "TAM/SAM/SOM 测算、竞品格局"]
+    # 功能导航
+    task_mode = st.selectbox(
+        "选择分析模块",
+        ["执行摘要生成 (Executive Summary)", "市场空间测算 (Market Sizing)", "竞品格局分析 (Competitive Landscape)"]
     )
     
     st.markdown("---")
+    api_key = st.text_input("系统授权码 (API Key)", type="password")
     
-    # 获取 API Key
-    api_key = st.text_input("请输入 Google API Key", type="password")
+    st.markdown("### 💡 专业提示")
+    if "Executive" in task_mode:
+        st.info("执行摘要不仅是总结，更是钩子。本模块将基于 VC 逻辑重构您的叙事结构。")
+    elif "Market" in task_mode:
+        st.info("系统将基于流行病学数据进行 TAM/SAM/SOM 三级估算。")
     
-    st.info("💡 提示：'市场分析'模块会自动根据您的赛道进行 TAM/SAM/SOM 估算。")
-    st.caption("Powered by Gemini 2.5 Pro")
+    st.markdown("---")
+    st.caption("© 2025 Sensight Capital. All Rights Reserved.")
 
-# ================= 核心逻辑区 =================
+# ================= 2. 主界面：结构化输入流 =================
 
-st.title("🚀 Sensight 晟策 · 商业计划书智能生成")
+st.title("🧬 Sensight 晟策 · 智能分析")
 
-# 动态显示副标题
-if "Market" in task_type:
-    st.markdown("### 🔍 模块 B：市场规模与竞争格局分析")
-else:
-    st.markdown("### 📝 模块 A：执行摘要 (Executive Summary)")
+# 使用 Expander 把输入区折叠起来，显得更有条理
+with st.expander("📝 项目基础信息录入 (点击展开/收起)", expanded=True):
+    col1, col2 = st.columns(2)
+    with col1:
+        project_name = st.text_input("项目名称", placeholder="例如：Molecule-X")
+        indication = st.text_input("目标适应症", placeholder="例如：晚期非小细胞肺癌 (NSCLC)")
+    with col2:
+        stage = st.selectbox("当前临床阶段", ["临床前 (Pre-clinical)", "IND 申报阶段", "临床 I 期", "临床 II 期", "临床 III 期", "已上市"])
+        modality = st.selectbox("技术模态", ["小分子化药", "单抗/双抗", "ADC", "细胞治疗 (CAR-T/NK)", "基因治疗", "医疗器械/耗材", "数字疗法"])
 
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    st.subheader("1. 项目输入")
-    project_name = st.text_input("项目名称/代号", placeholder="例如：新型丝素蛋白人造血管")
+    # 核心差异化输入 (这是体现你专业度的地方，引导用户填什么)
+    st.markdown("#### 核心要素解析")
+    c1, c2 = st.columns(2)
+    with c1:
+        tech_highlight = st.text_area("核心技术/机制 (MoA)", height=100, placeholder="例如：采用全新的变构抑制机制，克服了现有的耐药突变...", help="请重点描述与竞品在机制上的不同之处")
+    with c2:
+        data_highlight = st.text_area("关键验证数据 (Data)", height=100, placeholder="例如：在头对头实验中，ORR 提升了 20%...", help="请提供动物实验或临床试验的核心数据")
     
-    # 根据不同任务提示不同的输入内容
-    if "Market" in task_type:
-        placeholder_text = "请提供：\n1. 目标适应症 (如：晚期非小细胞肺癌)\n2. 目标患者人群 (如：中国每年新增 xx 万人)\n3. 主要竞品 (如：泰瑞沙)\n4. 定价策略 (可选)"
+    competitors = st.text_input("主要对标竞品 (可选)", placeholder="例如：奥希替尼 (AstraZeneca), 那个谁 (Competitor B)")
+
+    start_btn = st.button("🚀 启动 Sensight 分析引擎", type="primary", use_container_width=True)
+
+# ================= 3. 输出逻辑与结果展示 =================
+
+if start_btn:
+    if not api_key:
+        st.error("❌ 未检测到授权码，请在左侧输入 API Key。")
+    elif not project_name or not tech_highlight:
+        st.warning("⚠️ 信息不完整：请至少填写【项目名称】和【核心技术】。")
     else:
-        placeholder_text = "请提供：\n1. 核心技术壁垒\n2. 动物/临床数据\n3. 团队背景\n4. 融资需求"
-
-    raw_text = st.text_area("2. 把您的项目信息丢在这里：", height=400, placeholder=placeholder_text)
-    
-    generate_btn = st.button(f"✨ 立即生成 {task_type.split(' ')[1]}", type="primary")
-
-with col2:
-    st.subheader("3. 交付结果")
-    
-    if generate_btn:
-        if not api_key:
-            st.error("请先在左侧侧边栏输入您的 API Key 才能启动大脑。")
-        elif not raw_text:
-            st.warning("巧妇难为无米之炊，请先输入项目信息。")
-        else:
-            try:
-                genai.configure(api_key=api_key)
-                # 使用最强模型
-                model = genai.GenerativeModel('gemini-2.5-pro') 
+        # === 模拟专业分析过程 (增加仪式感) ===
+        status_box = st.status("🔍 Sensight 正在进行多维分析...", expanded=True)
+        status_box.write("⚙️ 初始化 VC 评估模型...")
+        time.sleep(1) # 假装思考，增加沉浸感
+        status_box.write(f"🧬 识别技术模态: {modality} / 适应症: {indication}")
+        status_box.write("📊 正在检索行业基准数据 (Benchmark)...")
+        time.sleep(1)
+        
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-2.5-pro')
+            
+            # 构建一个极其结构化的 Prompt
+            user_input_structured = f"""
+            项目名称: {project_name}
+            适应症: {indication}
+            阶段: {stage}
+            模态: {modality}
+            核心技术: {tech_highlight}
+            关键数据: {data_highlight}
+            竞品: {competitors}
+            """
+            
+            if "Executive" in task_mode:
+                system_prompt = """
+                # Role
+                你现在是 Sensight (晟策) 的首席医疗投资顾问。
+                用户已经填写了结构化的尽职调查表单。请将这些碎片信息重构为一份逻辑严密的 Executive Summary。
                 
-                # ================= 提示词路由逻辑 =================
+                # Output Style
+                不要输出 Markdown 标题，直接输出内容。
+                使用专业、客观、极其精炼的投资银行行文风格。
+                """
+                prompt = system_prompt + "\n\n用户录入数据:\n" + user_input_structured
                 
-                if "Executive Summary" in task_type:
-                    # === 提示词 A: 执行摘要 ===
-                    system_prompt = """
-                    # Role
-                    你现在是 Sensight (晟策) 的首席医疗投资顾问。
-                    
-                    # Task
-                    接收用户的输入，重写为 **Executive Summary (执行摘要)**。
-                    
-                    # Output Format
-                    请严格按照以下 Markdown 结构输出：
-                    ### [项目名称] - Executive Summary
-                    #### 🚀 投资亮点 (Investment Highlights)
-                    * **[核心技术]**: (提炼技术壁垒)
-                    * **[验证数据]**: (强调动物/临床数据)
-                    * **[商业壁垒]**: (强调专利/排他性)
-                    #### 🩺 未满足需求 (Unmet Needs)
-                    * (描述现有疗法痛点)
-                    #### 💡 解决方案 (Solution)
-                    * (描述产品优势)
-                    #### 📅 融资与规划 (Ask & Milestones)
-                    * (描述融资用途及预期节点)
-                    """
+                status_box.write("✍️ 正在生成投资逻辑架构...")
+                response = model.generate_content(prompt)
+                status_box.update(label="✅ 分析完成", state="complete", expanded=False)
                 
-                else:
-                    # === 提示词 B: 市场与竞品 (新增) ===
-                    system_prompt = """
-                    # Role
-                    你现在是 Sensight (晟策) 的行业研究员，擅长进行费米估算和竞争格局分析。
-
-                    # Task
-                    基于用户输入，撰写 **市场规模 (Market Sizing)** 与 **竞争分析 (Competition)** 章节。
-                    
-                    # Critical Rule (估算逻辑)
-                    如果用户未提供具体市场数据，请利用你作为 LLM 的知识库，**根据适应症的流行病学数据（发病率/患病率）和当前标准疗法费用**，进行合理的 TAM/SAM/SOM 估算，并**必须在括号里注明估算逻辑**。
-
-                    # Output Format
-                    请严格按照以下 Markdown 结构输出：
-                    ### [项目名称] - 市场与竞品分析
-
-                    #### 📈 市场规模测算 (Market Sizing)
-                    > *注：以下数据基于行业公开流行病学数据估算*
-                    * **TAM (潜在总市场)**: [金额] 
-                        * *测算逻辑*: [目标人群总数] x [年治疗费用]
-                    * **SAM (可服务市场)**: [金额]
-                        * *测算逻辑*: [符合特定基因型/分期的具体人群] x [渗透率]
-                    * **CAGR (年复合增长率)**: [百分比] (预测未来 5 年增长趋势)
-
-                    #### ⚔️ 竞争格局 (Competitive Landscape)
-                    | 竞品名称 | 研发阶段 | 靶点/机制 | 劣势/痛点 | 我们的优势 |
-                    | :--- | :--- | :--- | :--- | :--- |
-                    | [竞品A] | [如: 上市] | [如: EGFR TKI] | [如: 耐药性] | [如: 克服耐药] |
-                    | [竞品B] | [如: 临床III期] | ... | ... | ... |
-                    
-                    #### 🎯 市场准入与策略 (Go-to-Market)
-                    * **定价策略**: ...
-                    * **医保路径**: ...
-                    """
+                # === 结果展示区 ===
+                st.subheader("📄 投资摘要分析报告")
+                st.markdown("---")
+                st.markdown(response.text)
                 
-                user_prompt = f"项目名称：{project_name}\n项目原始信息：{raw_text}"
+                # 增加下载按钮 (让它感觉像个文件)
+                st.download_button(
+                    label="📥 导出为报告 (TXT)",
+                    data=response.text,
+                    file_name=f"{project_name}_Executive_Summary.txt",
+                    mime="text/plain"
+                )
+
+            elif "Market" in task_mode:
+                # 针对市场分析的特殊处理
+                system_prompt = """
+                # Role
+                你现在是 Sensight 的行业分析师。
                 
-                with st.spinner(f"Sensight 正在分析{task_type.split(' ')[1]}数据..."):
-                    response = model.generate_content(system_prompt + "\n\n" + user_prompt)
-                    st.markdown(response.text)
-                    st.success("生成完成！您可以直接复制上方内容。")
+                # Task
+                根据用户的适应症和模态，估算 TAM/SAM/SOM。
+                
+                # Output Format
+                请直接返回一个标准的 JSON 格式数据（不要包含 ```json 标记），方便我解析：
+                {
+                    "TAM_value": "数字+单位 (如 500亿 RMB)",
+                    "TAM_desc": "简短的一句话逻辑",
+                    "SAM_value": "数字+单位",
+                    "SAM_desc": "简短的一句话逻辑",
+                    "SOM_value": "数字+单位",
+                    "SOM_desc": "简短的一句话逻辑",
+                    "CAGR": "数字%",
+                    "analysis": "一段详细的市场分析文字"
+                }
+                """
+                prompt = system_prompt + "\n\n用户录入数据:\n" + user_input_structured
+                
+                status_box.write("🧮 正在构建费米估算模型...")
+                response = model.generate_content(prompt)
+                status_box.update(label="✅ 测算完成", state="complete", expanded=False)
+                
+                # 尝试解析 JSON (为了展示大数字卡片)
+                try:
+                    import json
+                    # 清理一下可能存在的 markdown 标记
+                    clean_json = response.text.replace("```json", "").replace("```", "").strip()
+                    data = json.loads(clean_json)
                     
-            except Exception as e:
-                st.error(f"发生错误: {e}")
+                    st.subheader("📈 市场空间测算 (Market Sizing)")
+                    
+                    # 炫酷的指标卡展示
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("TAM (潜在总市场)", data['TAM_value'], help=data['TAM_desc'])
+                    c2.metric("SAM (可服务市场)", data['SAM_value'], help=data['SAM_desc'])
+                    c3.metric("SOM (目标市场)", data['SOM_value'], help=data['SOM_desc'])
+                    c4.metric("CAGR (年复合增长)", data['CAGR'])
+                    
+                    st.markdown("### 详细分析逻辑")
+                    st.write(data['analysis'])
+                    
+                except:
+                    # 如果 AI 没返回完美 JSON，兜底显示文本
+                    st.write(response.text)
+
+        except Exception as e:
+            status_box.update(label="❌ 分析中断", state="error")
+            st.error(f"系统错误: {e}")
