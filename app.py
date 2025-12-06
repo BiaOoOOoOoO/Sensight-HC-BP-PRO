@@ -1,4 +1,6 @@
-# ... import 语句 ...
+
+import streamlit as st
+import google.generativeai as genai
 
 # === 插入这段自检代码 ===
 try:
@@ -10,9 +12,6 @@ try:
 except:
     pass
 # ========================
-import streamlit as st
-import google.generativeai as genai
-
 # ================= 配置区 =================
 # 页面基础设置
 st.set_page_config(
@@ -97,5 +96,6 @@ with col2:
                 except Exception as e:
 
                     st.error(f"发生错误，请检查 API Key 或网络: {e}")
+
 
 
