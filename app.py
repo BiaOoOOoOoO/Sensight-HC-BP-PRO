@@ -1,3 +1,15 @@
+# ... import 语句 ...
+
+# === 插入这段自检代码 ===
+try:
+    st.sidebar.warning("正在检测可用模型...")
+    genai.configure(api_key=st.secrets.get("api_key") or "你的APIKEY") # 注意这里要用你在侧边栏输入的key，实际操作不用改这行，只要往下看
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            st.sidebar.write(m.name)
+except:
+    pass
+# ========================
 import streamlit as st
 import google.generativeai as genai
 
@@ -85,4 +97,5 @@ with col2:
                 except Exception as e:
 
                     st.error(f"发生错误，请检查 API Key 或网络: {e}")
+
 
