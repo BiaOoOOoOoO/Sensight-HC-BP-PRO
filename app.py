@@ -266,4 +266,5 @@ Seeking **$4M USD** to advance from PCC selection to IND submission.
             <span style="color:#FFD700;">▍</span> 
             </div>
             """, unsafe_allow_html=True)
-            time.sleep(0.01
+            time.sleep(0.01)
+
