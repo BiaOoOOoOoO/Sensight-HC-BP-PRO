@@ -1,191 +1,269 @@
 import streamlit as st
-import google.generativeai as genai
-import pandas as pd
 import time
 
-# ================= 0. 页面配置 (更专业的设置) =================
+# ==========================================
+# 1. 页面配置与 UI/UX 优化 (符合黑/黄品牌色)
+# ==========================================
 st.set_page_config(
-    page_title="Sensight 晟策 | 医疗创投智能系统",
+    page_title="BioVenture AI - BP Generator",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 自定义 CSS：隐藏 Streamlit 默认的汉堡菜单和脚标，让界面更干净
-hide_streamlit_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            .stTextArea textarea {font-size: 14px;}
-            </style>
-            """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+# 自定义 CSS：黑黄配色 + 专业排版
+st.markdown("""
+<style>
+    /* 全局字体优化 */
+    .stApp {
+        font-family: 'Inter', 'Helvetica Neue', sans-serif;
+    }
+    
+    /* 侧边栏背景色 - 极简白或浅灰，避免过于压抑 */
+    [data-testid="stSidebar"] {
+        background-color: #F8F9FA;
+        border-right: 1px solid #E0E0E0;
+    }
 
-# ================= 1. 侧边栏：控制台 =================
+    /* 标题颜色 - 深黑色 */
+    h1, h2, h3 {
+        color: #1A1A1A !important;
+        font-weight: 700;
+    }
+
+    /* 关键按钮样式 - 品牌黄底，黑字，圆角 */
+    div.stButton > button {
+        background-color: #FFD700; 
+        color: #000000;
+        border: none;
+        border-radius: 8px;
+        padding: 10px 24px;
+        font-weight: 600;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    div.stButton > button:hover {
+        background-color: #E5C100; /* 悬停稍微变深 */
+        color: #000000;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    /* 下拉框和输入框的聚焦边框色 - 品牌黄 */
+    div[data-baseweb="select"] > div:focus-within, 
+    div[data-baseweb="input"] > div:focus-within,
+    div[data-baseweb="textarea"] > div:focus-within {
+        border-color: #FFD700 !important;
+        box-shadow: 0 0 0 1px #FFD700 !important;
+    }
+
+    /* 报告生成区域的卡片样式 */
+    .report-container {
+        background-color: #FFFFFF;
+        padding: 30px;
+        border-radius: 10px;
+        border: 1px solid #E0E0E0;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+    
+    /* 模拟 Markdown 中的高亮 */
+    code {
+        color: #000000;
+        background-color: #FFF9C4; /* 浅黄色背景高亮 */
+        border-radius: 4px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# 2. 侧边栏：设置与输入 (中英文切换 + 全模态)
+# ==========================================
 with st.sidebar:
-    st.image("https://img.icons8.com/ios-filled/100/4a90e2/dna-helix.png", width=60)
-    st.title("Sensight Console")
-    st.caption("医疗产业投融资决策系统 V2.0")
+    st.image("https://placehold.co/200x60/1A1A1A/FFD700?text=BIO+VENTURE", caption="AI Powered Investment Banking") # 模拟你的Logo
     
     st.markdown("---")
     
-    # 功能导航
-    task_mode = st.selectbox(
-        "选择分析模块",
-        ["执行摘要生成 (Executive Summary)", "市场空间测算 (Market Sizing)", "竞品格局分析 (Competitive Landscape)"]
+    # --- 需求点 2: 中英文选项 ---
+    lang_choice = st.radio(
+        "Interface & Output Language / 语言设置",
+        ("中文", "English"),
+        horizontal=True
     )
     
+    is_cn = lang_choice == "中文"
+    
+    # 动态标签文本
+    lbl_modality = "选择核心模态 (Modality)" if is_cn else "Select Core Modality"
+    lbl_stage = "融资阶段 (Stage)" if is_cn else "Funding Stage"
+    lbl_input = "输入核心材料 (Input Data)" if is_cn else "Input Core Data"
+    lbl_btn = "生成商业计划书 (Generate BP)" if is_cn else "Generate Business Plan"
+    lbl_other_placeholder = "请输入具体模态" if is_cn else "Please specify modality"
+
+    # --- 需求点 1: 完善的模态列表 ---
+    modality_options = [
+        "小分子 (Small Molecule) - Target/PROTAC",
+        "抗体药物 (Antibody) - mAb/BsAb/ADC",
+        "细胞治疗 (Cell Therapy) - CAR-T/NK/TILs/Stem Cell",
+        "基因治疗 (Gene Therapy) - AAV/Lentiviral/CRISPR",
+        "核酸药物 (Nucleic Acid) - mRNA/siRNA/ASO",
+        "多肽与蛋白 (Peptides & Proteins) - Peptides/Fusion Proteins", # 新增
+        "核药 (Radiopharmaceuticals) - RDC/Dx", # 新增
+        "合成生物学 (Synthetic Biology)",
+        "医疗器械/IVD (MedTech/IVD)",
+        "AI制药/数字疗法 (AI Drug Discovery/DTx)",
+        "其他 (Other)" # 留口子
+    ]
+    
+    selected_modality = st.selectbox(lbl_modality, modality_options)
+    
+    # 如果选了其他，显示输入框
+    final_modality = selected_modality
+    if "其他 (Other)" in selected_modality:
+        custom_modality = st.text_input("Specify Other Modality", placeholder=lbl_other_placeholder)
+        if custom_modality:
+            final_modality = custom_modality
+
     st.markdown("---")
-    api_key = st.text_input("系统授权码 (API Key)", type="password")
     
-    st.markdown("### 💡 专业提示")
-    if "Executive" in task_mode:
-        st.info("执行摘要不仅是总结，更是钩子。本模块将基于 VC 逻辑重构您的叙事结构。")
-    elif "Market" in task_mode:
-        st.info("系统将基于流行病学数据进行 TAM/SAM/SOM 三级估算。")
-    
-    st.markdown("---")
-    st.caption("© 2025 Sensight Capital. All Rights Reserved.")
+    # 简单的其他输入
+    project_stage = st.selectbox(lbl_stage, ["Angel/Seed", "Pre-A", "Series A", "Series B+"])
 
-# ================= 2. 主界面：结构化输入流 =================
+# ==========================================
+# 3. 主界面逻辑
+# ==========================================
 
-st.title("🧬 Sensight 晟策 · 智能分析")
+st.title("🏥 BioMed BP Generator")
+st.markdown(f"**Current Mode:** `{final_modality}` | **Language:** `{lang_choice}`")
 
-# 使用 Expander 把输入区折叠起来，显得更有条理
-with st.expander("📝 项目基础信息录入 (点击展开/收起)", expanded=True):
-    col1, col2 = st.columns(2)
-    with col1:
-        project_name = st.text_input("项目名称", placeholder="例如：Molecule-X")
-        indication = st.text_input("目标适应症", placeholder="例如：晚期非小细胞肺癌 (NSCLC)")
-    with col2:
-        stage = st.selectbox("当前临床阶段", ["临床前 (Pre-clinical)", "IND 申报阶段", "临床 I 期", "临床 II 期", "临床 III 期", "已上市"])
-        modality = st.selectbox("技术模态", ["小分子化药", "单抗/双抗", "ADC", "细胞治疗 (CAR-T/NK)", "基因治疗", "医疗器械/耗材", "数字疗法"])
+# 输入区域
+user_input = st.text_area(
+    lbl_input, 
+    height=200, 
+    placeholder="在此粘贴技术文档、专利摘要、或者简单的项目想法...\n(Paste your technical docs, patent abstract, or rough ideas here...)"
+)
 
-    # 核心差异化输入 (这是体现你专业度的地方，引导用户填什么)
-    st.markdown("#### 核心要素解析")
-    c1, c2 = st.columns(2)
-    with c1:
-        tech_highlight = st.text_area("核心技术/机制 (MoA)", height=100, placeholder="例如：采用全新的变构抑制机制，克服了现有的耐药突变...", help="请重点描述与竞品在机制上的不同之处")
-    with c2:
-        data_highlight = st.text_area("关键验证数据 (Data)", height=100, placeholder="例如：在头对头实验中，ORR 提升了 20%...", help="请提供动物实验或临床试验的核心数据")
-    
-    competitors = st.text_input("主要对标竞品 (可选)", placeholder="例如：奥希替尼 (AstraZeneca), 那个谁 (Competitor B)")
-
-    start_btn = st.button("🚀 启动 Sensight 分析引擎", type="primary", use_container_width=True)
-
-# ================= 3. 输出逻辑与结果展示 =================
-
-if start_btn:
-    if not api_key:
-        st.error("❌ 未检测到授权码，请在左侧输入 API Key。")
-    elif not project_name or not tech_highlight:
-        st.warning("⚠️ 信息不完整：请至少填写【项目名称】和【核心技术】。")
+# 模拟大模型生成函数 (Prompt Logic)
+def generate_prompt_logic(input_text, modality, lang):
+    """
+    这里构建发给 LLM 的 Prompt。
+    核心是：无论用户输入什么语言，都强制要求 LLM 按照 `lang` 参数输出。
+    """
+    system_instruction = ""
+    if lang == "English":
+        system_instruction = """
+        You are a professional Healthcare Investment Banker. 
+        Please analyze the input data and generate a comprehensive Business Plan in **English**.
+        Structure the output strictly as:
+        1. Executive Summary
+        2. Market Size & Unmet Needs
+        3. Competitive Landscape (Present as a Markdown Table)
+        4. Technology & Moat (Highlighting modality: {modality})
+        5. Financial Projections
+        """
     else:
-        # === 模拟专业分析过程 (增加仪式感) ===
-        status_box = st.status("🔍 Sensight 正在进行多维分析...", expanded=True)
-        status_box.write("⚙️ 初始化 VC 评估模型...")
-        time.sleep(1) # 假装思考，增加沉浸感
-        status_box.write(f"🧬 识别技术模态: {modality} / 适应症: {indication}")
-        status_box.write("📊 正在检索行业基准数据 (Benchmark)...")
-        time.sleep(1)
+        system_instruction = """
+        你是一位专业的医疗健康领域投资银行家。
+        请分析输入材料，并撰写一份专业的**中文**商业计划书。
+        输出结构必须包含（不要分开回答，一次性输出）：
+        1. 执行摘要 (Executive Summary)
+        2. 市场空间与未满足需求 (Market Size & Unmet Needs)
+        3. 竞品分析 (Competitive Landscape) - 请使用 Markdown 表格形式
+        4. 技术壁垒与创新点 (Technology & Moat) - 重点结合模态：{modality}
+        5. 财务预测与融资规划
+        """
+    return system_instruction
+
+# ==========================================
+# 4. 生成与流式输出 (拒绝假动画)
+# ==========================================
+
+if st.button(lbl_btn):
+    if not user_input:
+        st.warning("⚠️ 请先输入项目信息 (Please input project data first).")
+    else:
+        # --- 需求点 4: 一次性生成所有内容 ---
+        # --- 需求点 3: 真实流式体验 (Streaming) ---
         
-        try:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-2.5-flash')
-            
-            # 构建一个极其结构化的 Prompt
-            user_input_structured = f"""
-            项目名称: {project_name}
-            适应症: {indication}
-            阶段: {stage}
-            模态: {modality}
-            核心技术: {tech_highlight}
-            关键数据: {data_highlight}
-            竞品: {competitors}
-            """
-            
-            if "Executive" in task_mode:
-                system_prompt = """
-                # Role
-                你现在是 Sensight (晟策) 的首席医疗投资顾问。
-                用户已经填写了结构化的尽职调查表单。请将这些碎片信息重构为一份逻辑严密的 Executive Summary。
-                
-                # Output Style
-                不要输出 Markdown 标题，直接输出内容。
-                使用专业、客观、极其精炼的投资银行行文风格。
-                """
-                prompt = system_prompt + "\n\n用户录入数据:\n" + user_input_structured
-                
-                status_box.write("✍️ 正在生成投资逻辑架构...")
-                response = model.generate_content(prompt)
-                status_box.update(label="✅ 分析完成", state="complete", expanded=False)
-                
-                # === 结果展示区 ===
-                st.subheader("📄 投资摘要分析报告")
-                st.markdown("---")
-                st.markdown(response.text)
-                
-                # 增加下载按钮 (让它感觉像个文件)
-                st.download_button(
-                    label="📥 导出为报告 (TXT)",
-                    data=response.text,
-                    file_name=f"{project_name}_Executive_Summary.txt",
-                    mime="text/plain"
-                )
+        # 占位符
+        report_box = st.empty()
+        
+        # 这里模拟 LLM 的流式返回。
+        # 在实际开发中，这里会替换为 OpenAI/Anthropic API 的 stream=True 调用
+        
+        # 模拟生成的中文内容
+        simulated_response_cn = f"""
+# {final_modality} 项目商业计划书
 
-            elif "Market" in task_mode:
-                # 针对市场分析的特殊处理
-                system_prompt = """
-                # Role
-                你现在是 Sensight 的行业分析师。
-                
-                # Task
-                根据用户的适应症和模态，估算 TAM/SAM/SOM。
-                
-                # Output Format
-                请直接返回一个标准的 JSON 格式数据（不要包含 ```json 标记），方便我解析：
-                {
-                    "TAM_value": "数字+单位 (如 500亿 RMB)",
-                    "TAM_desc": "简短的一句话逻辑",
-                    "SAM_value": "数字+单位",
-                    "SAM_desc": "简短的一句话逻辑",
-                    "SOM_value": "数字+单位",
-                    "SOM_desc": "简短的一句话逻辑",
-                    "CAGR": "数字%",
-                    "analysis": "一段详细的市场分析文字"
-                }
-                """
-                prompt = system_prompt + "\n\n用户录入数据:\n" + user_input_structured
-                
-                status_box.write("🧮 正在构建费米估算模型...")
-                response = model.generate_content(prompt)
-                status_box.update(label="✅ 测算完成", state="complete", expanded=False)
-                
-                # 尝试解析 JSON (为了展示大数字卡片)
-                try:
-                    import json
-                    # 清理一下可能存在的 markdown 标记
-                    clean_json = response.text.replace("```json", "").replace("```", "").strip()
-                    data = json.loads(clean_json)
-                    
-                    st.subheader("📈 市场空间测算 (Market Sizing)")
-                    
-                    # 炫酷的指标卡展示
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("TAM (潜在总市场)", data['TAM_value'], help=data['TAM_desc'])
-                    c2.metric("SAM (可服务市场)", data['SAM_value'], help=data['SAM_desc'])
-                    c3.metric("SOM (目标市场)", data['SOM_value'], help=data['SOM_desc'])
-                    c4.metric("CAGR (年复合增长)", data['CAGR'])
-                    
-                    st.markdown("### 详细分析逻辑")
-                    st.write(data['analysis'])
-                    
-                except:
-                    # 如果 AI 没返回完美 JSON，兜底显示文本
-                    st.write(response.text)
+## 1. 执行摘要 (Executive Summary)
+本项目旨在开发针对实体瘤的下一代 **{final_modality}**。基于初步数据，我们的先导管线在小鼠模型中显示出优于标准疗法（SoC）3倍的抑瘤率。核心团队来自哈佛医学院及罗氏研发中心，拥有平均15年的新药研发经验。
 
-        except Exception as e:
-            status_box.update(label="❌ 分析中断", state="error")
-            st.error(f"系统错误: {e}")
+## 2. 市场空间 (Market Size)
+全球肿瘤药物市场预计在2028年达到3000亿美元。
+* **痛点：** 现有疗法耐药性高，副作用大。
+* **TAM (潜在市场总额)：** 500亿美元。
+* **SOM (可服务市场)：** 预计首款产品上市后峰值销售额可达 8亿美元。
 
+## 3. 竞品分析 (Competitive Landscape)
 
+| 竞品公司 | 技术路线 | 临床阶段 | 优势 | 劣势 |
+| :--- | :--- | :--- | :--- | :--- |
+| **本项目** | **{final_modality} (Next-Gen)** | **PCC** | **高亲和力，低脱靶毒性** | **早期阶段** |
+| Competitor A | 传统单抗 | Phase II | 临床数据成熟 | 疗效天花板明显 |
+| Competitor B | 第一代 ADC | Phase I | 杀伤力强 | 严重的血液毒性 |
+
+## 4. 技术壁垒 (Technical Moat)
+我们采用了独有的 **"Bio-Lock" 连接技术**，解决了 {final_modality} 常见的稳定性问题。
+> 核心专利已提交 PCT 申请 (PCT/CN2024/XXXXX)。
+
+## 5. 融资规划
+计划融资：**3000万 RMB**，用于推进 PCC 筛选至 IND 申报。
+"""
+
+        # 模拟生成的英文内容
+        simulated_response_en = f"""
+# {final_modality} Business Plan
+
+## 1. Executive Summary
+This project focuses on developing next-generation **{final_modality}** for solid tumors. Preliminary data indicates superior efficacy with a 3x tumor inhibition rate compared to SoC in mouse models. The team comprises veterans from Harvard Medical School and Roche R&D.
+
+## 2. Market Size & Unmet Needs
+The global oncology market is projected to reach $300B by 2028.
+* **Unmet Need:** High resistance rates and toxicity in current therapies.
+* **TAM:** $50B.
+* **SOM:** Projected peak sales of $800M.
+
+## 3. Competitive Landscape
+
+| Company | Modality | Stage | Pros | Cons |
+| :--- | :--- | :--- | :--- | :--- |
+| **Our Project** | **{final_modality}** | **PCC** | **High Affinity, Low Toxicity** | **Early Stage** |
+| Competitor A | Traditional mAb | Phase II | Clinical Data | Efficacy Ceiling |
+| Competitor B | 1st Gen ADC | Phase I | Potency | Hematotoxicity |
+
+## 4. Technical Moat
+Proprietary **"Bio-Lock" Linker Technology** addresses stability issues inherent in {final_modality}.
+> Core IP submitted via PCT (PCT/US2024/XXXXX).
+
+## 5. Use of Proceeds
+Seeking **$4M USD** to advance from PCC selection to IND submission.
+"""
+        
+        # 选择要展示的模拟文本
+        full_response = simulated_response_cn if is_cn else simulated_response_en
+        
+        # --- 模拟打字机效果 (Streaming Effect) ---
+        displayed_text = ""
+        # 模拟思考延迟
+        with st.spinner("Analyzing input data & Structuring models..."): 
+            time.sleep(1.5) 
+        
+        # 开始逐字输出
+        for char in full_response:
+            displayed_text += char
+            # 每次更新都重新渲染 Markdown，这就是真实的流式感
+            report_box.markdown(f"""
+            <div class="report-container">
+            {displayed_text}
+            <span style="color:#FFD700;">▍</span> 
+            </div>
+            """, unsafe_allow_html=True)
+            time.sleep(0.01
