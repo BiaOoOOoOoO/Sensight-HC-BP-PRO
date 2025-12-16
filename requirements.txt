@@ -1,2 +1,5 @@
 streamlit
+
 google-generativeai
+openai
+duckduckgo-search
