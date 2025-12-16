@@ -91,7 +91,7 @@ if start_btn:
         
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-2.5-pro')
+            model = genai.GenerativeModel('gemini-2.5-flash''
             
             # 构建一个极其结构化的 Prompt
             user_input_structured = f"""
@@ -187,3 +187,4 @@ if start_btn:
         except Exception as e:
             status_box.update(label="❌ 分析中断", state="error")
             st.error(f"系统错误: {e}")
+
