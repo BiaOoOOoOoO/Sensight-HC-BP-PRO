@@ -1,3 +1,4 @@
+import google.generativeai as genai
 import streamlit as st
 import time
 from duckduckgo_search import DDGS # 用于实时搜索
@@ -104,15 +105,47 @@ def generate_vc_prompt(user_input, search_context, language):
 # ==========================================
 # 3. 侧边栏设置
 # ==========================================
-with st.sidebar:
-    st.title("🔎 BioVenture DeepDive")
-    st.caption("AI-Powered Due Diligence System")
-    st.markdown("---")
-    
-    api_key = st.text_input("OpenAI API Key", type="password")
-    language = st.radio("Output Language", ["中文", "English"])
-    
-    st.info("💡 **Pro Tip:** This mode performs live searches to verify competitor status (e.g., searching for 'Pfizer Danuglipron discontinuation').")
+try:
+            # 配置 Gemini
+            genai.configure(api_key=api_key) 
+            
+            # 使用 Gemini 1.5 Pro (逻辑能力接近 GPT-4，且对长文支持更好)
+            model = genai.GenerativeModel('gemini-1.5-pro')
+            
+            # Gemini 不支持像 OpenAI 那样的 system role 严格分层，
+            # 我们把 system prompt 拼在 user prompt 前面即可，效果一样。
+            combined_prompt = f"""
+            [System Instruction]
+            You are a senior healthcare investment analyst.
+            
+            {final_prompt}
+            """
+            
+            # 流式生成
+            response_stream = model.generate_content(combined_prompt, stream=True)
+            
+            report_text = ""
+            for chunk in response_stream:
+                if chunk.text:
+                    report_text += chunk.text
+                    main_placeholder.markdown(f"""
+                    <div class="report-card">
+                    {report_text}
+                    <span style="color:#FFD700;">▍</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # 完成态
+            main_placeholder.markdown(f"""
+            <div class="report-card">
+            {report_text}
+            </div>
+            """, unsafe_allow_html=True)
+            status_box.empty()
+            
+        except Exception as e:
+            st.error(f"Gemini API Error: {e}")
+            st.warning("请确认你的 Google Key 是否开通了 Gemini API 权限 (aistudio.google.com)")
 
 # ==========================================
 # 4. 主界面
@@ -216,3 +249,4 @@ if st.button("Start Deep Due Diligence / 开始深度尽调"):
 # ==========================================
 st.markdown("---")
 st.caption("Powered by Real-Time Search & Agentic Reasoning.")
+
