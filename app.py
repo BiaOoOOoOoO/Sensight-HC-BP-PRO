@@ -1,183 +1,202 @@
-import google.generativeai as genai
 import streamlit as st
 import time
-from duckduckgo_search import DDGS # 用于实时搜索
+import google.generativeai as genai
+from duckduckgo_search import DDGS
 from datetime import datetime
 
 # ==========================================
-# 1. 页面配置 (保持黑黄品牌调性)
+# 1. 页面配置与黑黄 UI 设计
 # ==========================================
 st.set_page_config(
-    page_title="BioVenture AI - Deep Dive",
+    page_title="BioVenture AI - Deep Dive (Gemini)",
     page_icon="🧬",
     layout="wide"
 )
 
-# 保持之前的 CSS 样式 (黑/黄/极简)
+# 自定义 CSS：黑黄配色 + 极简专业风
 st.markdown("""
 <style>
-    .stApp { font-family: 'Inter', sans-serif; background-color: #FAFAFA; }
-    [data-testid="stSidebar"] { background-color: #F8F9FA; border-right: 1px solid #E0E0E0; }
-    h1, h2, h3 { color: #1A1A1A !important; font-weight: 700; }
-    
-    /* 品牌黄按钮 */
-    div.stButton > button {
-        background-color: #FFD700; color: #000000; border: none;
-        border-radius: 6px; padding: 10px 24px; font-weight: 600;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    .stApp {
+        font-family: 'Inter', 'Helvetica Neue', sans-serif;
+        background-color: #FAFAFA;
     }
-    div.stButton > button:hover { background-color: #E5C100; color: #000000; }
     
-    /* 搜索状态条 */
+    /* 侧边栏样式 */
+    [data-testid="stSidebar"] {
+        background-color: #F8F9FA;
+        border-right: 1px solid #E0E0E0;
+    }
+    
+    /* 标题颜色：深黑 */
+    h1, h2, h3 {
+        color: #1A1A1A !important;
+        font-weight: 700;
+    }
+    
+    /* 核心按钮：品牌黄 (#FFD700) */
+    div.stButton > button {
+        background-color: #FFD700; 
+        color: #000000;
+        border: none;
+        border-radius: 6px;
+        padding: 10px 24px;
+        font-weight: 600;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    div.stButton > button:hover {
+        background-color: #E5C100;
+        color: #000000;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    
+    /* 搜索状态条样式 */
     .search-status {
         font-family: 'Courier New', monospace;
         color: #000000;
         background-color: #FFF9C4; /* 浅黄背景 */
-        padding: 8px;
+        padding: 10px;
         border-radius: 4px;
-        margin-bottom: 5px;
-        border-left: 3px solid #FFD700;
-        font-size: 0.85em;
+        margin-bottom: 8px;
+        border-left: 4px solid #FFD700; /* 左侧黄色高亮条 */
+        font-size: 0.9em;
     }
     
-    .report-card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    /* 报告卡片样式 */
+    .report-card {
+        background: #FFFFFF;
+        padding: 30px;
+        border-radius: 10px;
+        border: 1px solid #E0E0E0;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        line-height: 1.6;
+    }
+    
+    /* 代码块高亮 */
+    code {
+        color: #000000;
+        background-color: #FFF9C4;
+        border-radius: 4px;
+        padding: 2px 4px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 核心逻辑：AI Agent 工具函数
+# 2. 核心工具函数：实时搜索 (Agent Tools)
 # ==========================================
 
 def search_market_intel(query, max_results=3):
     """
-    模拟联网搜索工具。
-    在真实场景中，这里会根据 query 抓取最新的新闻、临床数据、FDA公告。
+    使用 DuckDuckGo 搜索最新的市场情报。
+    专门针对 'failure', 'discontinued', 'clinical data' 进行搜索。
     """
     results = []
+    current_year = datetime.now().year
+    
+    # 强制加上年份，确保不抓取旧新闻
+    search_query = f"{query} latest clinical data news {current_year}"
+    
     try:
-        # 使用 DuckDuckGo 搜索最新的信息 (模拟 Tavily/Google Search API)
-        # 加上当前年份，强制搜索最新数据
-        current_year = datetime.now().year
-        search_query = f"{query} clinical trial data news {current_year}"
-        
         with DDGS() as ddgs:
-            # 搜索新闻和结果
             ddgs_gen = ddgs.text(search_query, max_results=max_results)
-            for r in ddgs_gen:
-                results.append(f"- [Title]: {r['title']}\n  [Snippet]: {r['body']}\n  [Link]: {r['href']}")
+            if ddgs_gen:
+                for r in ddgs_gen:
+                    results.append(f"- [Title]: {r['title']}\n  [Snippet]: {r['body']}\n  [Source]: {r['href']}")
+            else:
+                results.append("No immediate search results found via API.")
     except Exception as e:
-        results.append(f"Search API Error: {str(e)}")
-        # Fallback (如果在本地跑不通网络，这里是一个兜底数据，演示用)
-        results.append("- [System Info] Pfizer discontinued Danuglipron twice-daily formulation in late 2023/early 2024 due to high adverse event rates.")
+        results.append(f"Search Tool Error (Network/RateLimit): {str(e)}")
+        # 兜底信息，防止报错导致流程中断
+        results.append("Note: Live search failed. Analysis will rely on model's internal knowledge.")
 
     return "\n".join(results)
 
 def generate_vc_prompt(user_input, search_context, language):
     """
-    构建 VC 视角的 Prompt。
-    核心差异：强制要求 AI 引用 search_context 中的事实，尤其是负面信息。
+    构建 VC 视角的 Prompt，结合搜索到的上下文。
     """
-    lang_instruction = "Output strictly in Professional Investment Banking English." if language == "English" else "请使用一级市场投资总监风格的中文输出（拒绝正确的废话）。"
+    lang_instruction = "Output strictly in Professional Investment Banking English." if language == "English" else "请使用一级市场投资总监风格的中文输出（拒绝正确的废话，强调数据和风险）。"
     
     prompt = f"""
     {lang_instruction}
     
-    You are a cynical, detail-oriented Healthcare Venture Capitalist.
+    You are a cynical, detail-oriented Healthcare Venture Capitalist (VC).
     You are analyzing the following project/sector:
     
     --- USER INPUT ---
     {user_input}
     
-    --- REAL-TIME MARKET INTELLIGENCE (LATEST DATA) ---
+    --- REAL-TIME MARKET INTELLIGENCE (LATEST SEARCH DATA) ---
     {search_context}
     
     --- INSTRUCTIONS ---
-    1. **Data Granularity**: Do not say "significant growth". Say "CAGR of X%". Do not say "good efficacy". Say "15% weight loss at 68 weeks (OASIS-1)".
-    2. **Fact Check**: Use the 'Market Intelligence' provided above to correct outdated assumptions. (e.g., If a competitor discontinued a drug, state it clearly as a RISK/FAILURE).
-    3. **Critical Thinking**: Analyze the specific "Moat" (e.g., Bioavailability, Half-life, IP, CMC cost).
-    4. **Structure**:
-       - **Executive Summary & Verdict** (Pass or Invest?)
-       - **Competitive Landscape (Deep Dive)**: Group by Leaders, Challengers, and GRAVEYARD (Failed projects).
-       - **Risk Assessment**: CMC issues, Safety signals (Liver toxicity?), IP cliffs.
+    1. **Fact Check & Update**: Use the 'Market Intelligence' provided above to correct any outdated knowledge (e.g., if a competitor discontinued a drug in 2024/2025, state it clearly).
+    2. **Data Granularity**: 
+       - Do NOT say "significant weight loss". 
+       - SAY "14.7% weight loss at 36 weeks (Source: Trial Name)".
+    3. **Competitive Landscape (The most important part)**:
+       - Group competitors into: **Tier 1 (Leaders)**, **Tier 2 (Challengers)**, and **The Graveyard (Failed/Discontinued)**.
+       - You MUST identify at least one "failed" or "high risk" competitor if data permits.
+    4. **Critical Risk Analysis**:
+       - Analyze specific risks: Liver toxicity? Manufacturing costs (COGS)? IP expiration?
+    
+    Output Structure:
+    # Deep Dive Investment Memo: {user_input}
+    ## 1. Executive Summary & Investment Verdict (Pass/Watch/Invest)
+    ## 2. Market Dynamics (Total Addressable Market & Unmet Needs)
+    ## 3. Competitive Landscape (Detailed Table & Analysis)
+    ## 4. Key Risks & "The Graveyard" (Who failed and why?)
+    ## 5. Conclusion
     """
     return prompt
 
 # ==========================================
-# 3. 侧边栏设置
+# 3. 侧边栏：设置
 # ==========================================
-try:
-            # 配置 Gemini
-            genai.configure(api_key=api_key) 
-            
-            # 使用 Gemini 1.5 Pro (逻辑能力接近 GPT-4，且对长文支持更好)
-            model = genai.GenerativeModel('gemini-1.5-pro')
-            
-            # Gemini 不支持像 OpenAI 那样的 system role 严格分层，
-            # 我们把 system prompt 拼在 user prompt 前面即可，效果一样。
-            combined_prompt = f"""
-            [System Instruction]
-            You are a senior healthcare investment analyst.
-            
-            {final_prompt}
-            """
-            
-            # 流式生成
-            response_stream = model.generate_content(combined_prompt, stream=True)
-            
-            report_text = ""
-            for chunk in response_stream:
-                if chunk.text:
-                    report_text += chunk.text
-                    main_placeholder.markdown(f"""
-                    <div class="report-card">
-                    {report_text}
-                    <span style="color:#FFD700;">▍</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # 完成态
-            main_placeholder.markdown(f"""
-            <div class="report-card">
-            {report_text}
-            </div>
-            """, unsafe_allow_html=True)
-            status_box.empty()
-            
-        except Exception as e:
-            st.error(f"Gemini API Error: {e}")
-            st.warning("请确认你的 Google Key 是否开通了 Gemini API 权限 (aistudio.google.com)")
+with st.sidebar:
+    st.image("https://placehold.co/200x60/1A1A1A/FFD700?text=BIO+VENTURE", caption="AI Investment Copilot")
+    st.markdown("---")
+    
+    # 这里特别注明填 Google Key
+    api_key = st.text_input("Google Gemini API Key", type="password", placeholder="AIzaSy...")
+    
+    language = st.radio("Report Language / 报告语言", ["中文", "English"])
+    
+    st.info("💡 **提示:** 本模式会实时联网搜索最新数据（如辉瑞管线终止、最新 P3 数据），生成比传统 AI 更精准的研报。")
+    st.caption("Powered by Google Gemini 1.5 & DuckDuckGo")
 
 # ==========================================
-# 4. 主界面
+# 4. 主界面逻辑
 # ==========================================
-st.title("🚀 VC-Grade Market Analysis")
-st.markdown("Enter a target molecule, company, or sector to generate a **Live Competitive Report**.")
+st.title("🔎 VC-Grade Deep Dive System")
+st.markdown("Enter a target (Molecule, Company, Mechanism) to generate a **Live Due Diligence Report**.")
 
-query = st.text_input("Research Target (e.g., Oral GLP-1, TIGIT, ADC Linkers)", value="Oral GLP-1 landscape")
+# 默认值设为口服 GLP-1，方便演示
+query = st.text_input("Research Target", value="Oral GLP-1 agonist competitive landscape")
 
-if st.button("Start Deep Due Diligence / 开始深度尽调"):
+if st.button("Start Due Diligence / 开始深度尽调"):
     if not api_key:
-        st.error("Please enter your OpenAI API Key in the sidebar.")
+        st.error("❌ 请在侧边栏输入 Google Gemini API Key (以 AIzaSy 开头)")
     else:
+        # 占位符
         main_placeholder = st.empty()
         status_box = st.empty()
         
-        # --- STEP 1: 思考与规划 (Chain of Thought) ---
+        # --- PHASE 1: 联网侦察 (Agent Search) ---
         status_box.markdown(f"""
         <div class="search-status">
-        Executing Agent Strategy...<br>
+        ⚙️ <strong>Agent Activated</strong><br>
         > Analyzing Intent: {query}<br>
-        > Identifying Key Competitors: Novo Nordisk, Eli Lilly, Pfizer, Structure...
+        > Strategy: Hunting for latest clinical data & failures...
         </div>
         """, unsafe_allow_html=True)
         time.sleep(1)
         
-        # --- STEP 2: 实时联网搜索 (The "Agent" Part) ---
-        # 我们针对性地搜索几个硬核问题，而不是泛泛搜索
+        # 定义搜索策略：搜数据，搜失败案例，搜最新报告
         search_queries = [
-            f"{query} latest clinical trial results 2024 2025",
-            f"{query} failed or discontinued clinical trials 2024", # 专门找死掉的项目
-            f"{query} competitive landscape market size reports"
+            f"{query} clinical trial results phase 3 2024 2025",
+            f"{query} discontinued failed clinical trials news", # 专门找负面
         ]
         
         full_search_context = ""
@@ -185,47 +204,43 @@ if st.button("Start Deep Due Diligence / 开始深度尽调"):
         for q in search_queries:
             status_box.markdown(f"""
             <div class="search-status">
-            🔍 Searching Live Web:<br>
-            > "{q}"...
+            🔍 <strong>Live Searching...</strong><br>
+            > Query: "{q}"
             </div>
             """, unsafe_allow_html=True)
             
-            # 调用上面的 Python 搜索函数
+            # 执行搜索
             results = search_market_intel(q)
-            full_search_context += f"\nQuery: {q}\nResults:\n{results}\n"
-            time.sleep(0.5) # 避免触发防爬虫
+            full_search_context += f"\n[Search Query]: {q}\n[Results]:\n{results}\n"
+            time.sleep(0.5) # 稍微停顿，模拟思考
             
         status_box.markdown(f"""
         <div class="search-status">
-        ✅ Data Retrieval Complete.<br>
-        > Synthesizing {len(full_search_context)} chars of market data...
-        > Applying VC Investment Logic...
+        ✅ <strong>Data Retrieval Complete</strong><br>
+        > Synthesizing market intelligence...<br>
+        > Applying VC investment logic (Gemini 1.5)...
         </div>
         """, unsafe_allow_html=True)
 
-        # --- STEP 3: 生成报告 (LLM Call) ---
-        # 这里使用 openai 库进行调用 (需用户提供 Key)
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        
+        # --- PHASE 2: 生成报告 (Gemini Generation) ---
         try:
+            # 配置 Google Gemini
+            genai.configure(api_key=api_key)
+            
+            # 使用 gemini-1.5-flash (速度快) 或 gemini-1.5-pro (逻辑强)
+            # 这里默认用 1.5-flash 以确保响应速度，如果你有 pro 权限可以改名
+            model = genai.GenerativeModel('gemini-1.5-flash') 
+            
             final_prompt = generate_vc_prompt(query, full_search_context, language)
             
-            # 使用流式输出
-            stream = client.chat.completions.create(
-                model="gpt-4o", # 建议使用 GPT-4o 以获得最强的逻辑能力
-                messages=[
-                    {"role": "system", "content": "You are a senior healthcare investment analyst."},
-                    {"role": "user", "content": final_prompt}
-                ],
-                stream=True
-            )
+            # 流式生成
+            response_stream = model.generate_content(final_prompt, stream=True)
             
-            # 显示结果
             report_text = ""
-            for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    report_text += chunk.choices[0].delta.content
+            for chunk in response_stream:
+                if chunk.text:
+                    report_text += chunk.text
+                    # 实时渲染 Markdown + 光标效果
                     main_placeholder.markdown(f"""
                     <div class="report-card">
                     {report_text}
@@ -233,20 +248,21 @@ if st.button("Start Deep Due Diligence / 开始深度尽调"):
                     </div>
                     """, unsafe_allow_html=True)
             
-            # 完成态
+            # 最终渲染（移除光标）
             main_placeholder.markdown(f"""
             <div class="report-card">
             {report_text}
             </div>
             """, unsafe_allow_html=True)
-            status_box.empty() # 清空状态栏
+            
+            status_box.empty() # 移除状态栏，保持界面干净
             
         except Exception as e:
-            st.error(f"Generation Error: {e}")
+            st.error(f"❌ Gemini API Error: {str(e)}")
+            st.warning("常见原因：Key 无效、该 Key 未开通 Gemini API 权限、或免费版每分钟请求超限。")
 
 # ==========================================
-# 5. 底部
+# 5. 底部版权
 # ==========================================
 st.markdown("---")
-st.caption("Powered by Real-Time Search & Agentic Reasoning.")
-
+st.caption("© 2025 BioVenture Agent. Generated content is for reference only.")
