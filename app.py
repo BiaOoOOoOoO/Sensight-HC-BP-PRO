@@ -1,24 +1,26 @@
 import streamlit as st
-import time
 import google.generativeai as genai
 from duckduckgo_search import DDGS
 from datetime import datetime
+import io
+from docx import Document
+from pptx import Presentation
+from pptx.util import Inches, Pt
 
 # ==========================================
-# 0. 全局配置与模型设定
+# 0. 全局配置
 # ==========================================
-# 用户指定模型版本。如果 2.5 尚未实装，代码里做了 fallback 处理
-MODEL_VERSION = 'gemini-2.5-flash' 
-fallback_model = 'gemini-1.5-flash' # 兜底模型
+MODEL_VERSION = 'gemini-2.0-flash-exp' # 建议使用最新实验版或 1.5-pro
+FALLBACK_MODEL = 'gemini-1.5-flash'
 
 st.set_page_config(
-    page_title="BioVenture BP Copilot",
+    page_title="BioVenture Analyst Pro",
     page_icon="🧬",
     layout="wide"
 )
 
 # ==========================================
-# 1. CSS 样式：黑黄配色 (保持品牌调性)
+# 1. UI 样式：黑黄配色 (专业工具风)
 # ==========================================
 st.markdown("""
 <style>
@@ -26,10 +28,6 @@ st.markdown("""
     
     /* 标题与文字 */
     h1, h2, h3 { color: #1A1A1A !important; font-weight: 700; }
-    .stTextArea textarea { font-size: 16px; line-height: 1.5; }
-    
-    /* 侧边栏 */
-    [data-testid="stSidebar"] { background-color: #F8F9FA; border-right: 1px solid #E0E0E0; }
     
     /* 按钮：黑黄品牌色 */
     div.stButton > button {
@@ -39,187 +37,236 @@ st.markdown("""
     }
     div.stButton > button:hover { background-color: #E5C100; color: #000000; }
 
-    /* 诊断卡片样式 */
-    .audit-card {
-        background-color: white; padding: 20px; border-radius: 8px;
-        border-left: 5px solid #FFD700; /* 黄色左边框 */
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 15px;
+    /* 分析报告卡片 */
+    .report-container {
+        background-color: white; padding: 30px; 
+        border: 1px solid #E0E0E0; border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
     }
-    .audit-score { font-size: 24px; font-weight: bold; color: #1A1A1A; }
     
-    /* 修正后的文本样式 */
-    .revised-text {
-        background-color: #FFFDE7; /* 极浅黄背景 */
-        padding: 15px; border-radius: 5px; border: 1px dashed #FFD700;
-        font-family: 'Georgia', serif; /* 衬线体，更像文档 */
-    }
+    /* 重点强调 */
+    .highlight { background-color: #FFF9C4; padding: 2px 5px; border-radius: 4px; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Agent 工具：事实核查 (Fact Checker)
+# 2. 核心逻辑：搜索与分析
 # ==========================================
-def verify_claims_with_search(bp_text):
-    """
-    提取 BP 中的关键声明，并联网验证真伪。
-    """
-    # 这里我们简化逻辑：搜索 BP 中的关键词，获取最新信息供 LLM 对比
-    # 实际生产中，这一步应该由 LLM 提取 Claim -> 搜索 -> 验证
+
+def search_market_data(query_text):
+    """联网获取扎实的竞品与临床数据"""
     search_context = ""
     try:
-        # 截取前 100 个字符做关键词搜索（模拟提取核心主题）
-        # 真实场景下应用 LLM 提取 Keywords
-        keywords = bp_text[:50].replace("\n", " ") 
-        query = f"{keywords} market size competitor analysis 2025"
+        # 提取前 80 字符作为搜索种子
+        seed = query_text[:80].replace("\n", " ")
+        # 针对性搜索词
+        queries = [
+            f"{seed} market size 2025 CAGR",
+            f"{seed} clinical trial results phase 3 competitors",
+            f"{seed} limitations and side effects"
+        ]
         
         with DDGS() as ddgs:
-            results = ddgs.text(query, max_results=3)
-            for r in results:
-                search_context += f"- [Source: {r['title']}]: {r['body']}\n"
-    except Exception as e:
-        search_context = f"Search unavailable: {str(e)}"
-    
+            for q in queries:
+                results = ddgs.text(q, max_results=2)
+                for r in results:
+                    search_context += f"- [Source: {r['title']}]: {r['body']}\n"
+    except Exception:
+        search_context = "Network search limit reached. Using internal knowledge base."
     return search_context
 
-# ==========================================
-# 3. 核心 Prompt 逻辑：评价与修改
-# ==========================================
-def generate_audit_prompt(user_bp, search_context, mode):
+def generate_analysis(user_input, search_data, api_key):
+    """
+    生成核心分析报告。
+    关键点：Temperature 设为 0.1 保证一致性；关闭安全过滤防止误杀医疗词汇。
+    """
+    genai.configure(api_key=api_key)
     
-    # 模式 A: 毒舌 VC 评审 (Critique)
-    if mode == "深度评审 (Audit)":
-        return f"""
-        You are a highly critical, top-tier Healthcare VC Partner. 
-        Your goal is NOT to be nice, but to ensure this BP gets funding.
-        
-        Task: Review the User's BP Draft below.
-        
-        User's Draft:
-        "{user_bp}"
-        
-        Real-time Market Context (For Fact Checking):
-        {search_context}
-        
-        Output format:
-        1. **Investment Score (0-100)**: Be harsh.
-        2. **Red Flags (Fatal Flaws)**: What would make you pass immediately? (Check if their market data contradicts the search context).
-        3. **Missing Logic**: What questions are unanswered?
-        4. **Action Items**: 3 specific things to fix.
-        
-        Use concise, professional VC terminology. Output in Chinese.
-        """
+    # 宽松的安全设置（防止报错 invalid operation / finish_reason 1）
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    ]
     
-    # 模式 B: 重新润色 (Rewrite)
-    else:
-        return f"""
-        You are a professional Bio-Medical Investment Banker and Editor.
-        Your task is to REWRITE the user's draft to sound professional, persuasive, and "investable".
-        
-        User's Draft:
-        "{user_bp}"
-        
-        Context/Facts to incorporate:
-        {search_context}
-        
-        Instructions:
-        1. Keep the core meaning but upgrade the vocabulary (e.g., change "we sell drugs" to "commercialize first-in-class therapeutics").
-        2. Structure it with clear headers if needed.
-        3. Fix any grammar or logical flow issues.
-        4. **Highlight**: If the user's data was wrong based on context, correct it in the rewrite but bold the change.
-        
-        Output the rewritten text directly. Output in Chinese.
-        """
+    # 极低温度保证一致性
+    generation_config = {
+        "temperature": 0.1,
+        "max_output_tokens": 4000,
+    }
+
+    try:
+        model = genai.GenerativeModel(MODEL_VERSION, 
+                                      safety_settings=safety_settings,
+                                      generation_config=generation_config)
+    except:
+        model = genai.GenerativeModel(FALLBACK_MODEL,
+                                      safety_settings=safety_settings,
+                                      generation_config=generation_config)
+
+    prompt = f"""
+    [System Role]
+    You are an expert Bio-Pharmaceutical Data Analyst. 
+    Your task is NOT to roleplay, but to provide a rigorous, objective, and data-driven "Modification Report" for a Business Plan (BP).
+    
+    [Input BP Text]
+    {user_input}
+    
+    [Verified Market Data (Reference Only)]
+    {search_data}
+    
+    [Output Requirements]
+    1. **Language**: Professional Chinese (Mainland Medical/Investment Standard).
+    2. **Tone**: Objective, Direct, High-Signal. No "I think" or "Investors might". Just facts.
+    3. **Consistency**: Ensure clinical data and numbers are precise.
+    4. **Structure**:
+       - **Section 1: Critical Data Rectification**: Correct any market size, CAGR, or competitor status errors in the input based on search data.
+       - **Section 2: Competitor Deep Dive**: A detailed Markdown Table comparing the user's project vs. Top 3 Competitors (Mechanism, Stage, Pros, Cons).
+       - **Section 3: Professional Rewrite**: Rewrite the core paragraph of the BP. Replace colloquialisms with professional terminology (e.g., change "drugs that kill cancer" to "cytotoxic therapeutics").
+       - **Section 4: PPT Outline**: Provide 4 key bullet points for a slide deck summary.
+
+    Output the report directly.
+    """
+    
+    # 使用非流式调用，以确保生成完整的对象供后续文件处理
+    response = model.generate_content(prompt)
+    return response.text
 
 # ==========================================
-# 4. 主界面布局
+# 3. 文件生成引擎 (Word & PPT)
 # ==========================================
+
+def create_word_doc(content):
+    """生成 Word 文档"""
+    doc = Document()
+    doc.add_heading('BioVenture BP Modification Report', 0)
+    
+    # 简单处理：将 Markdown 文本按行写入
+    for line in content.split('\n'):
+        if line.startswith('##'):
+            doc.add_heading(line.replace('#', '').strip(), level=2)
+        elif line.startswith('###'):
+            doc.add_heading(line.replace('#', '').strip(), level=3)
+        else:
+            doc.add_paragraph(line)
+            
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+def create_ppt_slides(content):
+    """生成 PPT 文档"""
+    prs = Presentation()
+    
+    # 1. 标题页
+    slide_layout = prs.slide_layouts[0] 
+    slide = prs.slides.add_slide(slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
+    title.text = "BP Optimization Report"
+    subtitle.text = "Generated by BioVenture Analyst AI"
+    
+    # 2. 内容页 (简单解析文本，每 500 字符一页，避免溢出)
+    # 在实际生产中，应该让 LLM 输出 JSON 格式来完美映射 PPT，这里做简化处理
+    chunks = content.split('## ') # 按章节分割
+    
+    for chunk in chunks:
+        if not chunk.strip(): continue
+        
+        lines = chunk.split('\n')
+        header = lines[0].strip()
+        body_text = "\n".join(lines[1:])[:800] # 截断防止溢出
+        
+        bullet_slide_layout = prs.slide_layouts[1]
+        slide = prs.slides.add_slide(bullet_slide_layout)
+        
+        shapes = slide.shapes
+        title_shape = shapes.title
+        body_shape = shapes.placeholders[1]
+        
+        title_shape.text = header
+        body_shape.text = body_text
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+# ==========================================
+# 4. 主界面逻辑
+# ==========================================
+
 with st.sidebar:
-    st.image("https://placehold.co/200x60/1A1A1A/FFD700?text=BP+COPILOT", caption="Founder's Workspace")
+    st.image("https://placehold.co/200x60/1A1A1A/FFD700?text=BIO+ANALYST", caption="Professional Tool")
     st.markdown("---")
-    
     api_key = st.text_input("Gemini API Key", type="password", placeholder="AIzaSy...")
-    
-    st.markdown("### 🛠️ 功能模式")
-    mode = st.radio("选择操作", ["深度评审 (Audit)", "智能润色 (Rewrite)"])
-    
-    st.markdown("---")
-    st.info(f"⚡ Engine: **{MODEL_VERSION}**\n(Fallback: {fallback_model})")
+    st.info("💡 **Mode:** Professional Analysis (Non-Roleplay)\n\n**Stability:** High (Temp=0.1)")
 
-st.title("🧬 BP 智能优化助手")
-st.markdown("**你的任务是融资，不是写作文。** 把你的 BP 核心段落（摘要、市场、竞品）粘贴在下方，让 AI 帮你找漏洞或重写。")
+st.title("🧬 BP 修改建议与数据核查工具")
+st.markdown("请输入 BP 核心段落。系统将进行**事实核查**、**数据修补**并生成**专业级修改建议**。")
 
-# 两列布局：左输入，右输出
-col1, col2 = st.columns([1, 1])
+user_input = st.text_area("Input Core Data / 输入 BP 文本", height=300, 
+                          placeholder="粘贴您的摘要、竞品分析或临床数据描述...")
 
-with col1:
-    st.subheader("📝 原始草稿 (Draft)")
-    user_input = st.text_area("在此粘贴你的 BP 文本...", height=500, placeholder="例如：我们要开发一款针对 GLP-1 耐药的口服小分子，目前处于 PCC 阶段，预计市场规模...")
-    
-    process_btn = st.button("🚀 开始分析/修改", use_container_width=True)
-
-with col2:
-    st.subheader("💡 优化结果 (Result)")
-    result_container = st.empty()
-
-# ==========================================
-# 5. 逻辑执行
-# ==========================================
-if process_btn:
+if st.button("开始专业分析 (Generate Report)", use_container_width=True):
     if not api_key:
-        st.error("请先在左侧填入 Gemini API Key")
+        st.error("❌ 请输入 API Key")
     elif not user_input:
-        st.warning("请先粘贴你的 BP 草稿")
+        st.warning("⚠️ 请输入文本内容")
     else:
-        # 1. 启动状态
-        status_box = st.status("正在调用 Gemini 2.5 Flash 进行分析...", expanded=True)
+        status_box = st.status("正在执行分析任务...", expanded=True)
         
-        # 2. 联网核查 (Agent Action)
-        status_box.write("🔍 正在检索市场数据验证你的观点...")
-        market_evidence = verify_claims_with_search(user_input)
-        status_box.write("✅ 事实核查完成")
+        # 1. 搜索
+        status_box.write("🔍 检索全球数据库 (Market/Clinical Data)...")
+        search_data = search_market_data(user_input)
         
-        # 3. 调用模型
+        # 2. 生成
+        status_box.write("🧠 执行一致性分析 (Temperature=0.1)...")
         try:
-            genai.configure(api_key=api_key)
+            analysis_text = generate_analysis(user_input, search_data, api_key)
             
-            # 尝试调用 2.5 flash
-            try:
-                model = genai.GenerativeModel(MODEL_VERSION)
-                # 这是一个简单的测试调用，确认模型是否存在
-                # 实际 API 中如果不存在会直接报错
-            except:
-                status_box.warning(f"Note: {MODEL_VERSION} 暂不可用，已自动切换至 {fallback_model}。")
-                model = genai.GenerativeModel(fallback_model)
+            status_box.update(label="分析完成", state="complete", expanded=False)
             
-            prompt = generate_audit_prompt(user_input, market_evidence, mode)
+            # 3. 展示结果
+            st.markdown(f"""
+            <div class="report-container">
+            {analysis_text}
+            </div>
+            """, unsafe_allow_html=True)
             
-            status_box.write("🧠 正在生成专业反馈...")
-            response_stream = model.generate_content(prompt, stream=True)
+            # 4. 下载区域
+            st.markdown("### 📥 导出报告")
+            col1, col2 = st.columns(2)
             
-            # 4. 流式输出结果
-            full_text = ""
-            for chunk in response_stream:
-                if chunk.text:
-                    full_text += chunk.text
-                    # 渲染
-                    if mode == "深度评审 (Audit)":
-                        result_container.markdown(f"""
-                        <div class="audit-card">
-                        {full_text}
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        result_container.markdown(f"""
-                        <div class="revised-text">
-                        {full_text}
-                        </div>
-                        """, unsafe_allow_html=True)
+            with col1:
+                # 生成 Word
+                word_file = create_word_doc(analysis_text)
+                st.download_button(
+                    label="📄 下载 Word 报告 (.docx)",
+                    data=word_file,
+                    file_name="BP_Analysis_Report.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True
+                )
             
-            status_box.update(label="处理完成", state="complete", expanded=False)
-            
+            with col2:
+                # 生成 PPT
+                ppt_file = create_ppt_slides(analysis_text)
+                st.download_button(
+                    label="📊 下载演示文稿 (.pptx)",
+                    data=ppt_file,
+                    file_name="BP_Summary_Slides.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    use_container_width=True
+                )
+                
         except Exception as e:
-            st.error(f"Error: {e}")
-            status_box.update(label="处理失败", state="error")
+            status_box.update(label="发生错误", state="error")
+            st.error(f"Error Details: {str(e)}")
+            st.warning("如果遇到 'finish_reason is 1'，通常是因为 Google 认为医疗内容敏感。代码中已尝试调低安全阈值。")
 
 st.markdown("---")
-st.caption("© 2025 BioVenture Copilot | Based on Gemini 2.5 Flash Architecture")
+st.caption("© 2025 BioVenture Analyst | Data provided by Real-time Search & Gemini 2.0")
