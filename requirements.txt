@@ -1,5 +1,5 @@
 streamlit
-google-generativeai
+google-genai
 duckduckgo-search
 python-docx
 python-pptx
