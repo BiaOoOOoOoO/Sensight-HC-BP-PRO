@@ -1,224 +1,187 @@
 import streamlit as st
-import google.generativeai as genai
-from duckduckgo_search import DDGS
-from google.api_core import exceptions
 import time
 import io
-from docx import Document
-from pptx import Presentation
-from pptx.util import Pt
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 # ==========================================
-# 0. 模型配置 (基于您的付费权限)
+# 1. 启动自检 (防止因缺库导致白屏)
 # ==========================================
-# 映射您提到的最新商业化模型名称
-AVAILABLE_MODELS = {
-    "Gemini 3.0 Pro (最强逻辑/旗舰)": "gemini-3.0-pro",
-    "Gemini 3.0 Flash (极速/低延迟)": "gemini-3.0-flash",
-    "Gemini 2.5 Flash-Lite (轻量级)": "gemini-2.5-flash-lite"
-}
+try:
+    import google.generativeai as genai
+    from duckduckgo_search import DDGS
+    from docx import Document
+    from pptx import Presentation
+    from pptx.util import Pt
+    from tenacity import retry, stop_after_attempt, wait_exponential
+except ImportError as e:
+    st.error(f"⚠️ 启动失败：缺少必要库。请检查 requirements.txt 是否包含所有依赖。\n\n详细错误: {e}")
+    st.stop()
 
+# ==========================================
+# 2. 页面配置
+# ==========================================
 st.set_page_config(
-    page_title="BioVenture Analyst (Gemini 3.0)",
+    page_title="BioVenture Analyst (Pro)",
     page_icon="🧬",
     layout="wide"
 )
 
 # ==========================================
-# 1. UI 样式：黑黄配色 (专业版)
+# 3. CSS 样式 (修复可能的显示问题)
 # ==========================================
 st.markdown("""
 <style>
-    .stApp { background-color: #FAFAFA; font-family: 'Inter', sans-serif; }
-    h1, h2, h3 { color: #1A1A1A !important; font-weight: 700; }
+    /* 强制全局背景色，防止暗黑模式冲突 */
+    .stApp { background-color: #FAFAFA; color: #333333; }
     
-    /* 侧边栏优化 */
-    [data-testid="stSidebar"] { background-color: #F8F9FA; border-right: 1px solid #E0E0E0; }
+    /* 标题颜色 */
+    h1, h2, h3 { color: #1A1A1A !important; }
+    
+    /* 侧边栏背景 */
+    [data-testid="stSidebar"] { background-color: #F0F2F6; }
 
-    /* 按钮样式 */
+    /* 按钮样式优化 */
     div.stButton > button {
         background-color: #FFD700; color: #000000; border: none;
-        border-radius: 6px; padding: 10px 24px; font-weight: 600;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        transition: all 0.2s;
+        width: 100%; padding: 10px; font-weight: bold; border-radius: 5px;
     }
-    div.stButton > button:hover { background-color: #E5C100; transform: translateY(-1px); }
+    div.stButton > button:hover { background-color: #E5C100; }
 
-    /* 报告容器 */
-    .report-container {
-        background-color: white; padding: 30px; 
-        border: 1px solid #E0E0E0; border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        margin-bottom: 20px; color: #333; line-height: 1.6;
+    /* 报告区域容器 */
+    .report-box {
+        background: white; padding: 25px; border-radius: 8px;
+        border: 1px solid #ddd; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        margin-top: 20px;
     }
-    
-    /* 状态条 */
-    .status-box {
-        padding: 10px; border-radius: 5px; margin-bottom: 10px;
-        font-family: monospace; font-size: 0.9em;
-    }
-    .status-search { background-color: #E3F2FD; color: #0D47A1; border-left: 4px solid #2196F3; }
-    .status-gen { background-color: #FFF3E0; color: #E65100; border-left: 4px solid #FF9800; }
-    .status-success { background-color: #E8F5E9; color: #1B5E20; border-left: 4px solid #4CAF50; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 核心功能：搜索与生成
+# 4. 核心功能逻辑
 # ==========================================
 
-def search_market_data(query_text):
-    """联网检索最新临床/市场数据 (用于事实核查)"""
-    search_context = ""
+# 预设模型列表 (根据 Google 最新 API 更新)
+MODEL_OPTIONS = {
+    "Gemini 2.0 Flash Exp (最新预览)": "gemini-2.0-flash-exp",
+    "Gemini 1.5 Pro (最强逻辑)": "gemini-1.5-pro", 
+    "Gemini 1.5 Flash (最快速度)": "gemini-1.5-flash",
+    "自定义 (Custom)": "custom"
+}
+
+def search_market_data(query):
+    """联网搜索"""
+    context = ""
     try:
-        # 提取关键词
-        seed = query_text[:100].replace("\n", " ")
-        queries = [
-            f"{seed} clinical trial phase 3 results competitors",
-            f"{seed} market size 2025 forecast CAGR",
-            f"{seed} disadvantages safety warning"
-        ]
-        
         with DDGS() as ddgs:
-            for q in queries:
-                time.sleep(0.3) # 微小延迟
-                results = ddgs.text(q, max_results=2)
-                if results:
-                    for r in results:
-                        search_context += f"- [Source: {r['title']}]: {r['body']}\n"
+            results = ddgs.text(f"{query[:50]} clinical trial market data 2025", max_results=2)
+            if results:
+                for r in results:
+                    context += f"- {r['body']}\n"
     except Exception:
-        search_context = "Search Unavailable. Analysis relying on internal model knowledge."
-    return search_context
+        context = "Search unavailable."
+    return context
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def generate_report(prompt, api_key, model_id):
-    """
-    调用 Gemini 3.0/2.5 模型。
-    包含自动重试机制 (Tenacity)，应对短暂的网络波动。
-    """
+def generate_content(model_id, api_key, prompt):
+    """调用 API 生成"""
     genai.configure(api_key=api_key)
-    
-    # 针对付费版的安全设置：放开限制，允许处理医疗专业术语
-    safety_settings = [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-    ]
-    
-    generation_config = {
-        "temperature": 0.1, # 保持输出稳定性
-        "max_output_tokens": 8192, # 3.0 Pro 支持更长输出
-    }
-    
-    model = genai.GenerativeModel(model_id, safety_settings=safety_settings, generation_config=generation_config)
-    
+    model = genai.GenerativeModel(model_id)
     response = model.generate_content(prompt)
     return response.text
 
 # ==========================================
-# 3. Prompt 构建 (专业/非角色扮演)
+# 5. Word/PPT 导出工具
 # ==========================================
-def build_prompt(user_input, search_data):
-    return f"""
-    [OBJECTIVE]
-    You are a professional Bio-Pharma Analyst Tool.
-    Your task is to review the user's Business Plan (BP) input, cross-reference it with market data, and provide a rigorous modification report.
-    
-    [STRICT RULES]
-    1. NO Roleplay (Do not say "As an investor...").
-    2. Tone: Objective, Clinical, Data-Driven.
-    3. Language: Professional Chinese (Mainland Standard).
-    
-    [INPUT TEXT]
-    {user_input}
-    
-    [MARKET INTELLIGENCE (SEARCH DATA)]
-    {search_data}
-    
-    [OUTPUT SECTIONS]
-    
-    ## 1. 数据核查与纠偏 (Data Audit)
-    - Validate specific numbers (Market Size, CAGR, Efficacy Rates) in the Input.
-    - If input is vague, provide specific data from the Search Data.
-    - Format: "原表述 -> 修正建议 (来源)"
-    
-    ## 2. 竞品深度对标 (Competitor Matrix)
-    Markdown Table comparing User's Project vs 3 Global Competitors.
-    Cols: [Competitor], [Mechanism], [Stage], [Pros], [Cons/Safety Risks].
-    
-    ## 3. 专业化改写 (Professional Refinement)
-    Rewrite the input paragraph using Investment Banking standard terminology.
-    - Eliminate colloquialisms.
-    - Focus on "Clinical Value Proposition" and "Commercialization Potential".
-    
-    ## 4. PPT 摘要 (Slide Deck Bullets)
-    5 high-impact bullet points for a slide deck.
-    """
-
-# ==========================================
-# 4. 文件导出引擎
-# ==========================================
-def create_word_doc(content):
+def create_word(text):
     doc = Document()
-    doc.add_heading('BP Modification Report (Gemini 3.0 Analysis)', 0)
-    
-    # 清洗 Markdown 标记并排版
-    for line in content.split('\n'):
-        clean_line = line.strip()
-        if clean_line.startswith('## '):
-            doc.add_heading(clean_line.replace('## ', ''), level=2)
-        elif clean_line.startswith('|'):
-            # 表格行简单转为列表，防止乱码 (复杂表格需更重型的解析)
-            doc.add_paragraph(clean_line, style='List Bullet')
-        else:
-            p = doc.add_paragraph(clean_line)
-            p.paragraph_format.space_after = Pt(6)
-            
+    doc.add_heading('BP Modification Report', 0)
+    doc.add_paragraph(text)
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
-def create_ppt_slides(content):
+def create_ppt(text):
     prs = Presentation()
-    # Title Slide
-    slide = prs.slides.add_slide(prs.slide_layouts[0])
-    slide.shapes.title.text = "BP Optimization Analysis"
-    slide.placeholders[1].text = "Powered by Google Gemini 3.0"
-    
-    # Content Slides
-    sections = content.split('## ')
-    for section in sections:
-        if not section.strip(): continue
-        lines = section.split('\n')
-        title = lines[0].strip()
-        body = "\n".join(lines[1:])[:900]
-        
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = title
-        slide.placeholders[1].text = body
-        
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "BP Analysis Summary"
+    slide.placeholders[1].text = text[:800] # 简单截断防止溢出
     buffer = io.BytesIO()
     prs.save(buffer)
     buffer.seek(0)
     return buffer
 
 # ==========================================
-# 5. 主界面逻辑
+# 6. 主界面布局
 # ==========================================
 with st.sidebar:
-    st.image("https://placehold.co/200x60/1A1A1A/FFD700?text=BIO+ANALYST", caption="Gemini Paid Edition")
-    st.markdown("---")
-    
+    st.header("⚙️ 设置")
     api_key = st.text_input("Gemini API Key", type="password")
     
-    st.subheader("🤖 模型选择 (Model Selection)")
-    # 这里让您自己选，不再帮您做决定
-    selected_model_label = st.selectbox(
-        "选择您的付费模型:", 
-        list(AVAILABLE_MODELS.keys()),
-        index=0 # 默认选 3.0 Pro
-    )
-    model_id = AVAILABLE_MODELS[selected_model_label]
+    # 模型选择器
+    model_choice = st.selectbox("选择模型引擎", list(MODEL_OPTIONS.keys()))
+    
+    # 如果选了自定义，或者用户是高级付费用户想用特定ID
+    if model_choice == "自定义 (Custom)":
+        final_model_id = st.text_input("输入模型 ID", value="gemini-1.5-pro-002")
+    else:
+        final_model_id = MODEL_OPTIONS[model_choice]
+        
+    st.info(f"当前调用 ID: `{final_model_id}`")
+
+st.title("🧬 BioVenture BP Analyst")
+st.markdown("专为付费版 Gemini 用户优化的 BP 深度修改工具。")
+
+col1, col2 = st.columns([1, 1])
+
+with col1:
+    st.subheader("1. 输入 BP 核心段落")
+    user_input = st.text_area("粘贴文本...", height=400, placeholder="例如：我们的口服 GLP-1 处于二期临床...")
+    
+    if st.button("开始分析与修改"):
+        if not api_key:
+            st.error("请先在左侧输入 API Key")
+        elif not user_input:
+            st.warning("请输入内容")
+        else:
+            with col2:
+                status = st.status("正在分析中...", expanded=True)
+                
+                # 1. 搜索
+                status.write("🔍 正在联网核实数据...")
+                search_res = search_market_data(user_input)
+                
+                # 2. 生成
+                status.write(f"⚡ 正在调用 {final_model_id}...")
+                
+                prompt = f"""
+                You are a professional Bio-Pharma Analyst. 
+                Task: Review the Input BP, Fact-check using Search Data, and Rewrite professionally.
+                
+                Input: {user_input}
+                Search Data: {search_res}
+                
+                Output Sections:
+                1. Data Audit (Correct specific numbers)
+                2. Competitor Table (Markdown)
+                3. Professional Rewrite (Investment Banking Style)
+                4. PPT Bullets
+                
+                Output in Professional Chinese.
+                """
+                
+                try:
+                    res_text = generate_content(final_model_id, api_key, prompt)
+                    status.update(label="分析完成", state="complete", expanded=False)
+                    
+                    # 渲染结果
+                    st.subheader("2. 分析结果")
+                    st.markdown(f'<div class="report-box">{res_text}</div>', unsafe_allow_html=True)
+                    
+                    # 下载按钮
+                    st.download_button("📄 下载 Word", create_word(res_text), "report.docx")
+                    st.download_button("📊 下载 PPT", create_ppt(res_text), "slides.pptx")
+                    
+                except Exception as e:
+                    status.update(label="发生错误", state="error")
+                    st.error(f"API 调用失败: {e}")
+                    st.caption("提示：如果是 404 Not Found，说明该模型 ID 在您当前的 API 地区暂不可用，请尝试切换其他模型。")
