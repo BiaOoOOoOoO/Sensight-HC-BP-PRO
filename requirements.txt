@@ -3,3 +3,4 @@ google-generativeai
 duckduckgo-search
 python-docx
 python-pptx
+tenacity
